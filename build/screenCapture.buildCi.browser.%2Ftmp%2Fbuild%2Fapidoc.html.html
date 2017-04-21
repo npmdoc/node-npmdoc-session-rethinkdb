@@ -1,0 +1,213 @@
+<html><head></head><body><div class="apidocDiv">
+<style>
+/*csslint
+*/
+.apidocDiv {
+    background: #fff;
+    font-family: Arial, Helvetica, sans-serif;
+}
+.apidocDiv a[href] {
+    color: #33f;
+    font-weight: bold;
+    text-decoration: none;
+}
+.apidocDiv a[href]:hover {
+    text-decoration: underline;
+}
+.apidocCodeCommentSpan {
+    background: #bbf;
+    color: #000;
+    display: block;
+}
+.apidocCodeKeywordSpan {
+    color: #d00;
+    font-weight: bold;
+}
+.apidocCodePre {
+    background: #eef;
+    border: 1px solid;
+    color: #777;
+    padding: 5px;
+    white-space: pre-wrap;
+}
+.apidocFooterDiv {
+    margin-top: 20px;
+    text-align: center;
+}
+.apidocModuleLi {
+    margin-top: 10px;
+}
+.apidocSectionDiv {
+    border-top: 1px solid;
+    margin-top: 20px;
+}
+.apidocSignatureSpan {
+    color: #777;
+    font-weight: bold;
+}
+</style>
+<h1>api documentation for
+    <a href="https://github.com/llambda/session-rethinkdb">session-rethinkdb (v2.0.0)</a>
+</h1>
+<h4>RethinkDB session store for Express and Connect</h4>
+<div class="apidocSectionDiv"><a href="#apidoc.tableOfContents" id="apidoc.tableOfContents"><h1>table of contents</h1></a><ol>
+
+    <li class="apidocModuleLi"><a href="#apidoc.module.session-rethinkdb">module session-rethinkdb</a><ol>
+
+        <li>
+
+            <a class="apidocElementLiA" href="#apidoc.element.session-rethinkdb.session-rethinkdb">
+            function <span class="apidocSignatureSpan"></span>session-rethinkdb
+            <span class="apidocSignatureSpan">(connect)</span>
+            </a>
+
+        </li>
+
+    </ol></li>
+
+</ol></div>
+
+<div class="apidocSectionDiv">
+<h1><a href="#apidoc.module.session-rethinkdb" id="apidoc.module.session-rethinkdb">module session-rethinkdb</a></h1>
+
+
+    <h2>
+        <a href="#apidoc.element.session-rethinkdb.session-rethinkdb" id="apidoc.element.session-rethinkdb.session-rethinkdb">
+        function <span class="apidocSignatureSpan"></span>session-rethinkdb
+        <span class="apidocSignatureSpan">(connect)</span>
+        </a>
+    </h2>
+    <ul>
+    <li>description and source-code<pre class="apidocCodePre">session-rethinkdb = function (connect) {
+
+	var Store = (connect.session) ? connect.session.Store : connect.Store;
+
+	function RethinkStore(r, options) {
+		if (!r) {
+			throw new TypeError('You must pass in a rethinkdbdash instance as the first argument');
+		}
+		var self = this;
+		self.r = r;
+
+		self.options = options || {};
+
+		self.options.table = self.options.table || 'session';
+		self.options.browserSessionsMaxAge = self.options.browserSessionsMaxAge || 86400000; // 1 day
+
+		Store.call(self, self.options); // Inherit from Store
+
+		self.r.tableCreate(self.options.table)
+		.run()
+		.catch(function (error) {
+			if (!error.message.indexOf('already exists') &gt; 0) {
+				throw error;
+			}
+		})
+		.then(function () {
+			return self.r.table(self.options.table)
+			.indexStatus('expires')
+			.run()
+			.catch(function (err) {
+				debug('INDEX STATUS %j', err);
+				return self.r.table(self.options.table).indexCreate('expires').run();
+			})
+			.then(function (result) {
+				debug('PRIOR STEP %j', result);
+
+				self.clearInterval = setInterval(function () {
+					self.r.table(self.options.table)
+					.between(0, self.r.now(), {index: 'expires'})
+					.delete()
+					.run()
+					.tap(function (result) {
+						debug('DELETED EXPIRED %j', result);
+					});
+				}, self.options.clearInterval || 60000).unref();
+
+				self.emit('connect');
+			});
+		})
+	}
+
+	util.inherits(RethinkStore, Store);
+
+	RethinkStore.prototype.get = function (sid, fn) {
+		var self = this;
+
+		debug('GETTING "%s" ...', sid);
+		return self.r.table(self.options.table)
+		.get(sid)
+		.run()
+		.then(function (data) {
+			debug('GOT %j', data);
+			return data ? data.session : null;
+		}).asCallback(fn);
+	};
+
+	RethinkStore.prototype.set = function (sid, sess, fn) {
+		var self = this;
+
+		var sessionToStore = {
+			id: sid,
+			expires: new Date(Date.now() + (sess.cookie.originalMaxAge || self.options.browserSessionsMaxAge)),
+			session: sess
+		};
+		debug('SETTING "%j" ...', sessionToStore);
+		return self.r.table(self.options.table)
+		.insert(sessionToStore, {
+			conflict: 'replace'
+		})
+		.run()
+		.then(function (data) {
+			debug('SET %j', data);
+		})
+		.asCallback(fn);
+	};
+
+	RethinkStore.prototype.destroy = function (sid, fn) {
+		var self = this;
+
+		debug('DELETING "%s" ...', sid);
+		return self.r.table(self.options.table)
+		.get(sid)
+		.delete()
+		.run()
+		.tap(function (data) {
+			debug('DELETED %j', data);
+		})
+		.asCallback(fn);
+	};
+
+	RethinkStore.prototype.clear = function (fn) {
+		var self = this;
+
+		return self.r.table(self.options.table)
+		.delete()
+		.run()
+		.asCallback(fn);
+	};
+
+	RethinkStore.prototype.length = function (fn) {
+		var self = this;
+
+		return self.r.table(self.options.table)
+		.count()
+		.run()
+		.asCallback(fn);
+	};
+
+	return RethinkStore;
+}</pre></li>
+    <li>example usage<pre class="apidocCodePre">n/a</pre></li>
+    </ul>
+
+
+</div>
+
+<div class="apidocFooterDiv">
+    [ this document was created with
+    <a href="https://github.com/kaizhu256/node-utility2" target="_blank">utility2</a>
+    ]
+</div>
+</div>
+</body></html>
